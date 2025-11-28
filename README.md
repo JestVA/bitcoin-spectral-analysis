@@ -1,0 +1,1 @@
+<div class="substack-post-embed"><p lang="en">bitcoin has no detectable cycles in daily data by semn.ai</p><p>a frequency analysis </p><a data-post-link href="https://semnai.substack.com/p/bitcoin-has-no-detectable-cycles">Read on Substack</a></div><script async src="https://substack.com/embedjs/embed.js" charset="utf-8"></script>
