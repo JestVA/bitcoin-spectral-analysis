@@ -16,14 +16,14 @@ from scipy.signal import welch
 # ------------------ CONFIGURABLE PARAMETERS ------------------ #
 
 TICKER = "BTC-USD"
-PERIOD = "2y"  # "2y", "5y", etc.
-INTERVAL = "1d"  # working with daily data
-FS = 1.0  # sampling frequency: 1 sample / day
+PERIOD = "730d"  # max available for 1h data in yfinance (730 days = 2 years)
+INTERVAL = "1h"  # working with hourly data
+FS = 24.0  # sampling frequency: 24 samples / day (1 sample per hour)
 
-# window settings for spectrogram
-WINDOW_DAYS = 128  # window length in days
-STEP_DAYS = 16  # window displacement in days
-N_PER_SEG = 64  # for Welch inside the window
+# window settings for spectrogram (in hours)
+WINDOW_HOURS = 128 * 24  # window length in hours (equivalent to 128 days)
+STEP_HOURS = 16 * 24  # window displacement in hours (equivalent to 16 days)
+N_PER_SEG = 256  # for Welch inside the window
 
 
 # ------------------ UTILITY FUNCTIONS ------------------ #
@@ -79,15 +79,15 @@ def sliding_spectrogram(log_returns: pd.Series):
         r = r.flatten()
     n = len(r)
 
-    if n < WINDOW_DAYS:
+    if n < WINDOW_HOURS:
         raise RuntimeError("Too few data points for the selected window size.")
 
-    starts = np.arange(0, n - WINDOW_DAYS + 1, STEP_DAYS)
+    starts = np.arange(0, n - WINDOW_HOURS + 1, STEP_HOURS)
     spec_list = []
     time_axis = []
 
     for s in starts:
-        e = s + WINDOW_DAYS
+        e = s + WINDOW_HOURS
         segment = r[s:e]
         # No need to manually subtract mean - welch does this with detrend="constant"
         freqs, psd = welch(
@@ -98,7 +98,7 @@ def sliding_spectrogram(log_returns: pd.Series):
             scaling="density",
         )
         spec_list.append(psd)
-        time_axis.append(log_returns.index[s + WINDOW_DAYS // 2])
+        time_axis.append(log_returns.index[s + WINDOW_HOURS // 2])
 
     spec = np.vstack(spec_list).T  # shape: [freq, time_window]
     return freqs, np.array(time_axis), spec
@@ -125,9 +125,14 @@ def cutoff_frequency(freqs, psd, power_ratio=0.95):
 
 
 def main():
-    print(f"Downloading {PERIOD} of daily data for {TICKER} from yfinance...")
+    print(f"Downloading {PERIOD} of hourly data for {TICKER} from yfinance...")
     prices = download_prices(TICKER, PERIOD, INTERVAL)
     print(f"Number of data points: {len(prices)}")
+
+    # Calculate time span
+    time_span_hours = len(prices)
+    time_span_days = time_span_hours / 24
+    print(f"Time span: {time_span_days:.1f} days ({time_span_hours} hours)")
 
     log_returns = compute_log_returns(prices)
     print(f"Number of log-returns: {len(log_returns)}")
@@ -136,19 +141,20 @@ def main():
     freqs, psd = global_psd(log_returns)
     f_cut, total_power = cutoff_frequency(freqs, psd, power_ratio=0.95)
 
-    dt_opt_days = 1.0 / (2.0 * f_cut) if f_cut > 0 else np.inf
+    dt_opt_hours = 1.0 / (2.0 * f_cut) if f_cut > 0 else np.inf
 
     print("\n=== GLOBAL PSD SUMMARY ===")
     print(f"Total power (arbitrary units): {total_power:.3e}")
     print(f"f_cutoff (95% of power): {f_cut:.4f} cycles/day")
-    print(f"Optimal Nyquist step ~ 1/(2*f_cutoff): {dt_opt_days:.2f} days")
-    print(f"That is, a sampling faster than ~ {dt_opt_days * 24:.1f} hours")
+    print(f"Optimal Nyquist step ~ 1/(2*f_cutoff): {dt_opt_hours:.2f} hours")
+    if dt_opt_hours < 1:
+        print(f"That is, a sampling faster than ~ {dt_opt_hours * 60:.1f} minutes")
 
     # Global PSD plot (log-log is usually clearer)
     plt.figure(figsize=(8, 4))
     plt.loglog(freqs[1:], psd[1:])  # skip 0 Hz for log-scale
     plt.axvline(f_cut, color="r", linestyle="--", label=f"f_cutoff={f_cut:.4f}")
-    plt.title(f"{TICKER} - PSD log-return (daily, {PERIOD})")
+    plt.title(f"{TICKER} - PSD log-return (hourly, {PERIOD})")
     plt.xlabel("Frequency (cycles/day)")
     plt.ylabel("Power spectral density")
     plt.legend()
@@ -161,8 +167,8 @@ def main():
     freqs_s, time_axis, spec = sliding_spectrogram(log_returns)
 
     plt.figure(figsize=(10, 4))
-    # low frequencies are more interesting; we can cut at, e.g., 0.5 cycles/day
-    max_f = 0.5
+    # low frequencies are more interesting; we can cut at, e.g., 5 cycles/day
+    max_f = 5.0  # increased for hourly data
     mask = freqs_s <= max_f
 
     im = plt.imshow(
@@ -178,7 +184,8 @@ def main():
         cmap="viridis",
     )
     plt.colorbar(im, label="PSD (dB, arbitrary units)")
-    plt.title(f"{TICKER} - Log-return spectrogram ({WINDOW_DAYS}-day windows)")
+    window_days = WINDOW_HOURS / 24
+    plt.title(f"{TICKER} - Log-return spectrogram ({window_days:.0f}-day windows)")
     plt.xlabel("Window (time index)")
     plt.ylabel("Frequency (cycles/day)")
     plt.tight_layout()
